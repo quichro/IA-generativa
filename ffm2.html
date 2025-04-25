@@ -1,0 +1,249 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Forest Fire Percolation Simulation</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin: 20px;
+        }
+        #grid-container {
+            display: inline-block;
+            margin: 20px auto;
+        }
+        .grid {
+            display: grid;
+            grid-gap: 1px;
+            background-color: #ddd;
+        }
+        .cell {
+            width: 10px;
+            height: 10px;
+            background-color: white;
+        }
+        .tree {
+            background-color: green;
+        }
+        .fire {
+            background-color: red;
+        }
+        .ash {
+            background-color: black;
+        }
+        .controls {
+            margin: 20px;
+        }
+        button {
+            padding: 8px 16px;
+            margin: 0 5px;
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+    <h1>Forest Fire Percolation Simulation</h1>
+    <div class="controls">
+        <label for="size">Grid Size:</label>
+        <input type="number" id="size" value="50" min="10" max="100">
+        <label for="probability">Ignition Probability:</label>
+        <input type="number" id="probability" value="0.5" min="0.1" max="1" step="0.05">
+        <label for="density">Tree Density:</label>
+        <input type="number" id="density" value="0.7" min="0.1" max="1" step="0.05">
+        <button id="start">Start Simulation</button>
+        <button id="reset">Reset</button>
+    </div>
+    <div id="grid-container"></div>
+    <div id="stats">
+        <p>Step: <span id="step-count">0</span></p>
+        <p>Burning: <span id="fire-count">0</span></p>
+    </div>
+
+    <script>
+        // DOM elements
+        const gridContainer = document.getElementById('grid-container');
+        const startButton = document.getElementById('start');
+        const resetButton = document.getElementById('reset');
+        const stepCountElement = document.getElementById('step-count');
+        const fireCountElement = document.getElementById('fire-count');
+        
+        // Simulation parameters
+        let gridSize = 50;
+        let ignitionProbability = 0.5;
+        let treeDensity = 0.7;
+        
+        // Simulation state
+        let grid = [];
+        let nextGrid = [];
+        let stepCount = 0;
+        let simulationInterval = null;
+        let isRunning = false;
+        
+        // Initialize the grid
+        function initializeGrid() {
+            grid = [];
+            nextGrid = [];
+            gridContainer.innerHTML = '';
+            
+            const sizeInput = parseInt(document.getElementById('size').value);
+            gridSize = Math.max(10, Math.min(100, sizeInput));
+            
+            ignitionProbability = parseFloat(document.getElementById('probability').value);
+            treeDensity = parseFloat(document.getElementById('density').value);
+            
+            // Create grid element
+            const gridElement = document.createElement('div');
+            gridElement.className = 'grid';
+            gridElement.style.gridTemplateColumns = `repeat(${gridSize}, 10px)`;
+            gridContainer.appendChild(gridElement);
+            
+            // Initialize grid arrays
+            for (let i = 0; i < gridSize; i++) {
+                grid[i] = [];
+                nextGrid[i] = [];
+                for (let j = 0; j < gridSize; j++) {
+                    // Randomly place trees based on density
+                    if (Math.random() < treeDensity) {
+                        grid[i][j] = 'tree';
+                    } else {
+                        grid[i][j] = 'empty';
+                    }
+                    nextGrid[i][j] = grid[i][j];
+                    
+                    // Create cell element
+                    const cell = document.createElement('div');
+                    cell.className = 'cell ' + grid[i][j];
+                    cell.id = `cell-${i}-${j}`;
+                    gridElement.appendChild(cell);
+                }
+            }
+            
+            // Start fire at random position
+            const startX = Math.floor(Math.random() * gridSize);
+            const startY = Math.floor(Math.random() * gridSize);
+            if (grid[startX][startY] === 'tree') {
+                grid[startX][startY] = 'fire';
+                updateCell(startX, startY);
+            }
+            
+            stepCount = 0;
+            updateStats();
+        }
+        
+        // Update a single cell's appearance
+        function updateCell(x, y) {
+            const cell = document.getElementById(`cell-${x}-${y}`);
+            if (cell) {
+                cell.className = 'cell ' + grid[x][y];
+            }
+        }
+        
+        // Update statistics display
+        function updateStats() {
+            stepCountElement.textContent = stepCount;
+            
+            let fireCount = 0;
+            for (let i = 0; i < gridSize; i++) {
+                for (let j = 0; j < gridSize; j++) {
+                    if (grid[i][j] === 'fire') {
+                        fireCount++;
+                    }
+                }
+            }
+            fireCountElement.textContent = fireCount;
+        }
+        
+        // Run one step of the simulation
+        function simulationStep() {
+            let hasFire = false;
+            
+            // Copy current grid to next grid
+            for (let i = 0; i < gridSize; i++) {
+                for (let j = 0; j < gridSize; j++) {
+                    nextGrid[i][j] = grid[i][j];
+                    
+                    // Turn fires into ash in the next step
+                    if (grid[i][j] === 'fire') {
+                        nextGrid[i][j] = 'ash';
+                        hasFire = true;
+                    }
+                }
+            }
+            
+            // If no fires left, stop simulation
+            if (!hasFire) {
+                stopSimulation();
+                return;
+            }
+            
+            // Spread fire to neighbors
+            for (let i = 0; i < gridSize; i++) {
+                for (let j = 0; j < gridSize; j++) {
+                    if (grid[i][j] === 'fire') {
+                        // Von Neumann neighborhood (up, down, left, right)
+                        const neighbors = [
+                            {x: i-1, y: j},
+                            {x: i+1, y: j},
+                            {x: i, y: j-1},
+                            {x: i, y: j+1}
+                        ];
+                        
+                        for (const neighbor of neighbors) {
+                            const ni = neighbor.x;
+                            const nj = neighbor.y;
+                            
+                            // Check if neighbor is within bounds
+                            if (ni >= 0 && ni < gridSize && nj >= 0 && nj < gridSize) {
+                                // If neighbor is a tree and random chance succeeds, ignite it
+                                if (grid[ni][nj] === 'tree' && Math.random() < ignitionProbability) {
+                                    nextGrid[ni][nj] = 'fire';
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Update grid and display
+            for (let i = 0; i < gridSize; i++) {
+                for (let j = 0; j < gridSize; j++) {
+                    grid[i][j] = nextGrid[i][j];
+                    updateCell(i, j);
+                }
+            }
+            
+            stepCount++;
+            updateStats();
+        }
+        
+        // Start the simulation
+        function startSimulation() {
+            if (isRunning) return;
+            isRunning = true;
+            startButton.disabled = true;
+            simulationInterval = setInterval(simulationStep, 100);
+        }
+        
+        // Stop the simulation
+        function stopSimulation() {
+            if (!isRunning) return;
+            clearInterval(simulationInterval);
+            isRunning = false;
+            startButton.disabled = false;
+        }
+        
+        // Event listeners
+        startButton.addEventListener('click', startSimulation);
+        resetButton.addEventListener('click', () => {
+            stopSimulation();
+            initializeGrid();
+        });
+        
+        // Initialize on load
+        initializeGrid();
+    </script>
+</body>
+</html>
