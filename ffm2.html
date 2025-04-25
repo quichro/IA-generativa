@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Forest Fire Percolation Simulation</title>
+    <title>Forest Fire Percolation Analysis</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -34,41 +33,115 @@
         .ash {
             background-color: black;
         }
+        .empty {
+            background-color: white;
+        }
         .controls {
             margin: 20px;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 5px;
         }
         button {
             padding: 8px 16px;
             margin: 0 5px;
             cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+        }
+        button:disabled {
+            background-color: #cccccc;
+        }
+        button#analyze {
+            background-color: #2196F3;
+        }
+        #results {
+            margin: 20px auto;
+            max-width: 800px;
+            text-align: left;
+        }
+        #chart-container {
+            width: 100%;
+            height: 400px;
+            margin: 20px auto;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 8px;
+            text-align: center;
+        }
+        th {
+            background-color: #f2f2f2;
+        }
+        .progress-container {
+            width: 100%;
+            background-color: #f1f1f1;
+            margin: 20px 0;
+        }
+        .progress-bar {
+            height: 30px;
+            background-color: #4CAF50;
+            text-align: center;
+            line-height: 30px;
+            color: white;
         }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 </head>
 <body>
-    <h1>Forest Fire Percolation Simulation</h1>
+    <h1>Forest Fire Percolation Analysis</h1>
     <div class="controls">
         <label for="size">Grid Size:</label>
         <input type="number" id="size" value="50" min="10" max="100">
-        <label for="probability">Ignition Probability:</label>
-        <input type="number" id="probability" value="0.5" min="0.1" max="1" step="0.05">
         <label for="density">Tree Density:</label>
-        <input type="number" id="density" value="0.7" min="0.1" max="1" step="0.05">
-        <button id="start">Start Simulation</button>
+        <input type="number" id="density" value="0.7" min="0.1" max="1" step="0.05"><br><br>
+        <label for="p-min">Probability Min:</label>
+        <input type="number" id="p-min" value="0.1" min="0" max="1" step="0.05">
+        <label for="p-max">Probability Max:</label>
+        <input type="number" id="p-max" value="0.9" min="0" max="1" step="0.05">
+        <label for="p-step">Probability Step:</label>
+        <input type="number" id="p-step" value="0.05" min="0.01" max="0.2" step="0.01"><br><br>
+        <label for="runs">Runs per Probability:</label>
+        <input type="number" id="runs" value="5" min="1" max="20">
+        <button id="start">Start Single Simulation</button>
+        <button id="analyze">Run Percolation Analysis</button>
         <button id="reset">Reset</button>
+    </div>
+    <div id="progress-container" class="progress-container" style="display: none;">
+        <div id="progress-bar" class="progress-bar" style="width: 0%">0%</div>
     </div>
     <div id="grid-container"></div>
     <div id="stats">
-        <p>Step: <span id="step-count">0</span></p>
-        <p>Burning: <span id="fire-count">0</span></p>
+        <p>Step: <span id="step-count">0</span> | Burning: <span id="fire-count">0</span> | Probability: <span id="current-p">0.5</span></p>
     </div>
+    <div id="chart-container">
+        <canvas id="percolation-chart"></canvas>
+    </div>
+    <div id="results"></div>
 
     <script>
         // DOM elements
         const gridContainer = document.getElementById('grid-container');
         const startButton = document.getElementById('start');
+        const analyzeButton = document.getElementById('analyze');
         const resetButton = document.getElementById('reset');
         const stepCountElement = document.getElementById('step-count');
         const fireCountElement = document.getElementById('fire-count');
+        const currentPElement = document.getElementById('current-p');
+        const resultsElement = document.getElementById('results');
+        const progressContainer = document.getElementById('progress-container');
+        const progressBar = document.getElementById('progress-bar');
+        const chartCanvas = document.getElementById('percolation-chart');
+        
+        // Chart instance
+        let percolationChart = null;
         
         // Simulation parameters
         let gridSize = 50;
@@ -81,6 +154,7 @@
         let stepCount = 0;
         let simulationInterval = null;
         let isRunning = false;
+        let isAnalyzing = false;
         
         // Initialize the grid
         function initializeGrid() {
@@ -88,11 +162,12 @@
             nextGrid = [];
             gridContainer.innerHTML = '';
             
-            const sizeInput = parseInt(document.getElementById('size').value);
-            gridSize = Math.max(10, Math.min(100, sizeInput));
-            
-            ignitionProbability = parseFloat(document.getElementById('probability').value);
+            gridSize = parseInt(document.getElementById('size').value);
             treeDensity = parseFloat(document.getElementById('density').value);
+            
+            // Validate inputs
+            gridSize = Math.max(10, Math.min(100, gridSize));
+            treeDensity = Math.max(0.1, Math.min(1, treeDensity));
             
             // Create grid element
             const gridElement = document.createElement('div');
@@ -122,11 +197,15 @@
             }
             
             // Start fire at random position
-            const startX = Math.floor(Math.random() * gridSize);
-            const startY = Math.floor(Math.random() * gridSize);
-            if (grid[startX][startY] === 'tree') {
-                grid[startX][startY] = 'fire';
-                updateCell(startX, startY);
+            let firePlaced = false;
+            while (!firePlaced) {
+                const startX = Math.floor(Math.random() * gridSize);
+                const startY = Math.floor(Math.random() * gridSize);
+                if (grid[startX][startY] === 'tree') {
+                    grid[startX][startY] = 'fire';
+                    updateCell(startX, startY);
+                    firePlaced = true;
+                }
             }
             
             stepCount = 0;
@@ -144,6 +223,7 @@
         // Update statistics display
         function updateStats() {
             stepCountElement.textContent = stepCount;
+            currentPElement.textContent = ignitionProbability.toFixed(2);
             
             let fireCount = 0;
             for (let i = 0; i < gridSize; i++) {
@@ -176,7 +256,10 @@
             // If no fires left, stop simulation
             if (!hasFire) {
                 stopSimulation();
-                return;
+                if (!isAnalyzing) {
+                    alert(`Simulation ended after ${stepCount} steps!`);
+                }
+                return stepCount; // Return duration of fire
             }
             
             // Spread fire to neighbors
@@ -217,6 +300,7 @@
             
             stepCount++;
             updateStats();
+            return null; // Fire still burning
         }
         
         // Start the simulation
@@ -224,7 +308,14 @@
             if (isRunning) return;
             isRunning = true;
             startButton.disabled = true;
-            simulationInterval = setInterval(simulationStep, 100);
+            analyzeButton.disabled = true;
+            resetButton.disabled = true;
+            simulationInterval = setInterval(() => {
+                const result = simulationStep();
+                if (result !== null) {
+                    return result;
+                }
+            }, 100);
         }
         
         // Stop the simulation
@@ -233,17 +324,213 @@
             clearInterval(simulationInterval);
             isRunning = false;
             startButton.disabled = false;
+            analyzeButton.disabled = false;
+            resetButton.disabled = false;
+        }
+        
+        // Run percolation analysis
+        async function runPercolationAnalysis() {
+            if (isRunning || isAnalyzing) return;
+            
+            isAnalyzing = true;
+            startButton.disabled = true;
+            analyzeButton.disabled = true;
+            resetButton.disabled = true;
+            progressContainer.style.display = 'block';
+            
+            const pMin = parseFloat(document.getElementById('p-min').value);
+            const pMax = parseFloat(document.getElementById('p-max').value);
+            const pStep = parseFloat(document.getElementById('p-step').value);
+            const runs = parseInt(document.getElementById('runs').value);
+            
+            const probabilities = [];
+            const avgDurations = [];
+            const percolationRates = [];
+            
+            // Generate probability values to test
+            for (let p = pMin; p <= pMax; p += pStep) {
+                probabilities.push(p);
+                avgDurations.push(0);
+                percolationRates.push(0);
+            }
+            
+            const totalSimulations = probabilities.length * runs;
+            let completedSimulations = 0;
+            
+            // Run simulations for each probability
+            for (let i = 0; i < probabilities.length; i++) {
+                const p = probabilities[i];
+                let totalDuration = 0;
+                let percolationCount = 0;
+                
+                for (let j = 0; j < runs; j++) {
+                    // Update UI
+                    ignitionProbability = p;
+                    currentPElement.textContent = p.toFixed(2);
+                    
+                    // Initialize grid
+                    initializeGrid();
+                    
+                    // Run simulation to completion
+                    let duration = 0;
+                    let fireReachedEdge = false;
+                    
+                    while (true) {
+                        duration++;
+                        const result = simulationStep();
+                        
+                        // Check if fire reached any edge
+                        if (!fireReachedEdge) {
+                            for (let x = 0; x < gridSize; x++) {
+                                for (let y = 0; y < gridSize; y++) {
+                                    if (grid[x][y] === 'fire' && 
+                                        (x === 0 || x === gridSize-1 || y === 0 || y === gridSize-1)) {
+                                        fireReachedEdge = true;
+                                        break;
+                                    }
+                                }
+                                if (fireReachedEdge) break;
+                            }
+                        }
+                        
+                        if (result !== null) {
+                            totalDuration += duration;
+                            if (fireReachedEdge) percolationCount++;
+                            break;
+                        }
+                        
+                        // Small delay to allow UI updates
+                        await new Promise(resolve => setTimeout(resolve, 1));
+                    }
+                    
+                    completedSimulations++;
+                    const progress = Math.round((completedSimulations / totalSimulations) * 100);
+                    progressBar.style.width = `${progress}%`;
+                    progressBar.textContent = `${progress}%`;
+                }
+                
+                avgDurations[i] = totalDuration / runs;
+                percolationRates[i] = percolationCount / runs;
+            }
+            
+            // Display results
+            displayResults(probabilities, avgDurations, percolationRates);
+            
+            // Create chart
+            createChart(probabilities, avgDurations, percolationRates);
+            
+            // Reset state
+            isAnalyzing = false;
+            startButton.disabled = false;
+            analyzeButton.disabled = false;
+            resetButton.disabled = false;
+            progressContainer.style.display = 'none';
+            
+            // Reset to default probability for single simulations
+            ignitionProbability = parseFloat(document.getElementById('probability').value);
+        }
+        
+        // Display analysis results
+        function displayResults(probabilities, avgDurations, percolationRates) {
+            let html = '<h2>Percolation Analysis Results</h2>';
+            html += '<table>';
+            html += '<tr><th>Probability (p)</th><th>Avg. Duration</th><th>Percolation Rate</th></tr>';
+            
+            for (let i = 0; i < probabilities.length; i++) {
+                html += `<tr>
+                    <td>${probabilities[i].toFixed(2)}</td>
+                    <td>${avgDurations[i].toFixed(1)}</td>
+                    <td>${percolationRates[i].toFixed(2)}</td>
+                </tr>`;
+            }
+            
+            html += '</table>';
+            resultsElement.innerHTML = html;
+        }
+        
+        // Create chart
+        function createChart(probabilities, avgDurations, percolationRates) {
+            if (percolationChart) {
+                percolationChart.destroy();
+            }
+            
+            const ctx = chartCanvas.getContext('2d');
+            percolationChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: probabilities.map(p => p.toFixed(2)),
+                    datasets: [
+                        {
+                            label: 'Average Fire Duration',
+                            data: avgDurations,
+                            borderColor: 'rgb(255, 99, 132)',
+                            backgroundColor: 'rgba(255, 99, 132, 0.1)',
+                            yAxisID: 'y',
+                            tension: 0.1
+                        },
+                        {
+                            label: 'Percolation Rate',
+                            data: percolationRates,
+                            borderColor: 'rgb(54, 162, 235)',
+                            backgroundColor: 'rgba(54, 162, 235, 0.1)',
+                            yAxisID: 'y1',
+                            tension: 0.1
+                        }
+                    ]
+                },
+                options: {
+                    responsive: true,
+                    interaction: {
+                        mode: 'index',
+                        intersect: false,
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Ignition Probability (p)'
+                            }
+                        },
+                        y: {
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            title: {
+                                display: true,
+                                text: 'Average Duration'
+                            }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            title: {
+                                display: true,
+                                text: 'Percolation Rate'
+                            },
+                            min: 0,
+                            max: 1,
+                            grid: {
+                                drawOnChartArea: false
+                            }
+                        }
+                    }
+                }
+            });
         }
         
         // Event listeners
         startButton.addEventListener('click', startSimulation);
+        analyzeButton.addEventListener('click', runPercolationAnalysis);
         resetButton.addEventListener('click', () => {
             stopSimulation();
             initializeGrid();
         });
         
         // Initialize on load
-        initializeGrid();
+        window.addEventListener('load', () => {
+            initializeGrid();
+        });
     </script>
 </body>
 </html>
